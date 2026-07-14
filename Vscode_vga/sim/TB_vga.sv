@@ -38,9 +38,9 @@ module tb_vga_top;
     // culoare asteptata
     // =========================================================================
  
-    localparam logic [color_w-1:0] exp_red   = 4'hf;
+    localparam logic [color_w-1:0] exp_red   = 4'h0;
     localparam logic [color_w-1:0] exp_green = 4'h0;
-    localparam logic [color_w-1:0] exp_blue  = 4'h0;
+    localparam logic [color_w-1:0] exp_blue  = 4'hf;
  
     // =========================================================================
     // semnale dut

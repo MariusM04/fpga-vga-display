@@ -1,36 +1,48 @@
-module vga_top #(
-    parameter int color_w = 4,
+`timescale 1ns / 1ps
 
-    parameter logic [color_w-1:0] image_red   = 4'hf,
-    parameter logic [color_w-1:0] image_green = 4'h0,
-    parameter logic [color_w-1:0] image_blue  = 4'h0
-)(
-    input  logic pix_clk,
-    input  logic rst_n,
+module vga_top (
 
-    output logic hsync,
-    output logic vsync,
+    input  logic        sys_clock,
+    input  logic        reset,
 
-    output logic [color_w-1:0] vga_red,
-    output logic [color_w-1:0] vga_green,
-    output logic [color_w-1:0] vga_blue
+    output logic        Hsync,
+    output logic        Vsync,
+
+    output logic [3:0]  vgaRed,
+    output logic [3:0]  vgaGreen,
+    output logic [3:0]  vgaBlue
 );
 
+    // Active-low reset from SW1
+    logic resetn;
+
+    assign resetn = ~reset;
+
+    // Pixel clock for VGA
+    logic pix_clk;
+
+   clk_vga_wrapper u_clk_vga_wrapper (
+        .clk_out1_0 (pix_clk),
+        .reset      (resetn),
+        .sys_clock  (sys_clock)
+    );
+
+    // VGA controller instance
     vga_controller #(
-        .color_w    (color_w),
-        .image_red  (image_red),
-        .image_green(image_green),
-        .image_blue (image_blue)
-    ) controller_inst (
+        .color_w    (4),
+        .image_red  (4'h0),
+        .image_green(4'h0),
+        .image_blue (4'hf)
+    ) u_vga_controller (
         .pix_clk  (pix_clk),
-        .rst_n    (rst_n),
+        .rst_n    (resetn),
 
-        .hsync    (hsync),
-        .vsync    (vsync),
+        .hsync    (Hsync),
+        .vsync    (Vsync),
 
-        .vga_red  (vga_red),
-        .vga_green(vga_green),
-        .vga_blue (vga_blue)
+        .vga_red  (vgaRed),
+        .vga_green(vgaGreen),
+        .vga_blue (vgaBlue)
     );
 
 endmodule
