@@ -1,22 +1,24 @@
+`timescale 1ns / 1ps
+
 module vga_controller #(
-    parameter int color_w = 4,
-
-    parameter logic [color_w-1:0] image_red   = 4'h0,
-    parameter logic [color_w-1:0] image_green = 4'h0,
-    parameter logic [color_w-1:0] image_blue  = 4'hf
+    parameter int color_w = 4
 )(
-    input  logic pix_clk,
-    input  logic rst_n,
+    input  logic               pix_clk,
+    input  logic               rst_n,
 
-    output logic hsync,
-    output logic vsync,
+    input  logic               btn_u,
+    input  logic               btn_r,
+    input  logic               btn_d,
+    input  logic               btn_l,
 
+    output logic               hsync,
+    output logic               vsync,
     output logic [color_w-1:0] vga_red,
     output logic [color_w-1:0] vga_green,
     output logic [color_w-1:0] vga_blue
 );
 
-    // VGA 640x480 timing parameters
+    // VGA 640x480 @ 60Hz
     localparam int H_ACTIVE = 640;
     localparam int H_FP     = 16;
     localparam int H_SYNC   = 96;
@@ -29,315 +31,149 @@ module vga_controller #(
     localparam int V_BP     = 33;
     localparam int V_TOTAL  = V_ACTIVE + V_FP + V_SYNC + V_BP;
 
-    localparam logic H_POL = 1'b0;   // adaptarea VGA 1 strict sau 0 strict 
+    localparam logic H_POL = 1'b0;
     localparam logic V_POL = 1'b0;
 
-    // Parametrii pentru dreptunghiul negru care se misca pe ecran.
-    // Moving box parameters
-    localparam int BOX_W     = 260;
-    localparam int BOX_H     = 100;
-    localparam int MOVE_STEP = 30;   
+    // Dashboard layout
+    localparam int HEADER_H = 50;
+    localparam int FOOTER_Y = 440;
 
-    // Parametrii pentru textul afisat in interiorul dreptunghiului.
-    // Text parameters
-    localparam int TEXT_SCALE = 4;
-    localparam int CHAR_W     = 5;
-    localparam int CHAR_H     = 7;
-    localparam int CHAR_CELL  = 6;
-    localparam int TEXT_CHARS = 9;
+    localparam int MAP_X0 = 20;
+    localparam int MAP_Y0 = 60;
+    localparam int MAP_X1 = 620;
+    localparam int MAP_Y1 = 430;
 
-    localparam int TEXT_W = TEXT_CHARS * CHAR_CELL * TEXT_SCALE;
-    localparam int TEXT_H = CHAR_H * TEXT_SCALE;
+    localparam int ZONE_W = 130;
+    localparam int ZONE_H = 90;
 
-    localparam int TEXT_X = (BOX_W - TEXT_W) / 2;
-    localparam int TEXT_Y = (BOX_H - TEXT_H) / 2;
+    // Zone positions
+    localparam int BASE_X  = 40;
+    localparam int BASE_Y  = 80;
 
-    // Fiecare litera are un ID intern.
-    // Aceste ID-uri sunt folosite pentru a selecta desenul literei din font.
-    localparam logic [3:0] CHAR_N     = 4'd0;
-    localparam logic [3:0] CHAR_O     = 4'd1;
-    localparam logic [3:0] CHAR_S     = 4'd2;
-    localparam logic [3:0] CHAR_I     = 4'd3;
-    localparam logic [3:0] CHAR_G     = 4'd4;
-    localparam logic [3:0] CHAR_A     = 4'd5;
-    localparam logic [3:0] CHAR_L     = 4'd6;
-    localparam logic [3:0] CHAR_SPACE = 4'd7;
+    localparam int ALERT_X = 470;
+    localparam int ALERT_Y = 80;
 
-    // VGA counters
+    localparam int SAFE_X  = 40;
+    localparam int SAFE_Y  = 320;
+
+    localparam int CHECK_X = 470;
+    localparam int CHECK_Y = 320;
+
+    // Drone settings
+    localparam int DRONE_SIZE = 20;
+
+    localparam int DRONE_MIN_X = MAP_X0 + 3;
+    localparam int DRONE_MAX_X = MAP_X1 - DRONE_SIZE - 3;
+
+    localparam int DRONE_MIN_Y = MAP_Y0 + 3;
+    localparam int DRONE_MAX_Y = MAP_Y1 - DRONE_SIZE - 3;
+
+    localparam int DRONE_START_X = (H_ACTIVE - DRONE_SIZE) / 2;
+    localparam int DRONE_START_Y = (V_ACTIVE - DRONE_SIZE) / 2;
+
+    // Movement speed
+    localparam int SAFE_SPEED  = 2;
+    localparam int CHECK_SPEED = 4;
+    localparam int ALERT_SPEED = 7;
+
+    // Status values
+    localparam logic [1:0] STATUS_SAFE  = 2'd0;
+    localparam logic [1:0] STATUS_CHECK = 2'd1;
+    localparam logic [1:0] STATUS_ALERT = 2'd2;
+
     logic [9:0] h_count;
     logic [9:0] v_count;
-    
-    // Semnale care marcheaza zonele importante dintr-un cadru VGA
-    // VGA area signals
+
+    logic [9:0] drone_x;
+    logic [9:0] drone_y;
+
     logic active_area;
     logic hsync_area;
     logic vsync_area;
     logic frame_tick;
 
-    // Moving box state
-    logic [9:0] box_x;
-    logic [9:0] box_y;
-    logic       dir_x;
-    logic       dir_y;
+    logic [1:0] btn_u_sync;
+    logic [1:0] btn_r_sync;
+    logic [1:0] btn_d_sync;
+    logic [1:0] btn_l_sync;
 
-    // Collision signals
-    logic hit_right;
-    logic hit_left;
-    logic hit_bottom;
-    logic hit_top;
+    logic btn_u_s;
+    logic btn_r_s;
+    logic btn_d_s;
+    logic btn_l_s;
 
-    // Text drawing signals
-    logic       box_area;
-    logic       text_area;
-    logic       text_pixel;
+    logic drone_in_alert;
+    logic drone_in_check;
 
-    // Coordonatele locale sunt calculate fata de coltul dreptunghiului.
-    // Sunt utile pentru a sti unde se afla textul in interiorul dreptunghiului.
-    logic [9:0] local_x;
-    logic [9:0] local_y;
-    logic [9:0] tx; 
-    logic [9:0] ty; 
+    logic [1:0] status;
+    logic [3:0] move_step;
 
-    //coord in interiorul textului dupa scalare 
-    logic [7:0] text_col;
-    logic [7:0] text_row;
+    logic drone_area;
+    logic drone_border;
 
-     // char_index spune al catelea caracter din text este desenat.
-    logic [3:0] char_index;
-    logic [3:0] char_id;
+    logic text_pixel;
+    logic [11:0] text_rgb;
+    logic [3:0] status_text_id;
 
-     // Pozitia pixelului in interiorul unei litere bitmap.
-    logic [2:0] glyph_col;
-    logic [2:0] glyph_row;
-
-     // Un rand din litera curenta, reprezentat pe 5 biti.
-    logic [4:0] glyph_bits;
-
-    // RGB buses
     logic [11:0] background_rgb;
-    logic [11:0] box_rgb;
+    logic [11:0] drone_rgb;
     logic [11:0] final_rgb;
 
-    // Aceasta functie intoarce un rand din litera selectata.
-    // Fiecare litera este desenata ca o matrice de 5x7 biti.
-    // Font data for the NO SIGNAL text
-    function automatic logic [4:0] get_glyph_row(
-        input logic [3:0] char_id_in,
-        input logic [2:0] row_in
-    );
-        begin
-            get_glyph_row = 5'b00000;
+    assign active_area = (h_count < H_ACTIVE) && (v_count < V_ACTIVE);
 
-            case (char_id_in)
+    assign hsync_area = (h_count >= H_ACTIVE + H_FP) &&
+                        (h_count <  H_ACTIVE + H_FP + H_SYNC);
 
-                CHAR_N: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b10001;
-                        3'd1: get_glyph_row = 5'b11001;
-                        3'd2: get_glyph_row = 5'b10101;
-                        3'd3: get_glyph_row = 5'b10011;
-                        3'd4: get_glyph_row = 5'b10001;
-                        3'd5: get_glyph_row = 5'b10001;
-                        3'd6: get_glyph_row = 5'b10001;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    assign vsync_area = (v_count >= V_ACTIVE + V_FP) &&
+                        (v_count <  V_ACTIVE + V_FP + V_SYNC);
 
-                CHAR_O: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b01110;
-                        3'd1: get_glyph_row = 5'b10001;
-                        3'd2: get_glyph_row = 5'b10001;
-                        3'd3: get_glyph_row = 5'b10001;
-                        3'd4: get_glyph_row = 5'b10001;
-                        3'd5: get_glyph_row = 5'b10001;
-                        3'd6: get_glyph_row = 5'b01110;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    assign frame_tick = (h_count == H_TOTAL - 1) &&
+                        (v_count == V_TOTAL - 1);
 
-                CHAR_S: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b01111;
-                        3'd1: get_glyph_row = 5'b10000;
-                        3'd2: get_glyph_row = 5'b10000;
-                        3'd3: get_glyph_row = 5'b01110;
-                        3'd4: get_glyph_row = 5'b00001;
-                        3'd5: get_glyph_row = 5'b00001;
-                        3'd6: get_glyph_row = 5'b11110;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    assign btn_u_s = btn_u_sync[1];
+    assign btn_r_s = btn_r_sync[1];
+    assign btn_d_s = btn_d_sync[1];
+    assign btn_l_s = btn_l_sync[1];
 
-                CHAR_I: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b11111;
-                        3'd1: get_glyph_row = 5'b00100;
-                        3'd2: get_glyph_row = 5'b00100;
-                        3'd3: get_glyph_row = 5'b00100;
-                        3'd4: get_glyph_row = 5'b00100;
-                        3'd5: get_glyph_row = 5'b00100;
-                        3'd6: get_glyph_row = 5'b11111;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    // Drone touches red alert zone
+    assign drone_in_alert =
+        (drone_x + DRONE_SIZE > ALERT_X) &&
+        (drone_x < ALERT_X + ZONE_W) &&
+        (drone_y + DRONE_SIZE > ALERT_Y) &&
+        (drone_y < ALERT_Y + ZONE_H);
 
-                CHAR_G: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b01110;
-                        3'd1: get_glyph_row = 5'b10001;
-                        3'd2: get_glyph_row = 5'b10000;
-                        3'd3: get_glyph_row = 5'b10111;
-                        3'd4: get_glyph_row = 5'b10001;
-                        3'd5: get_glyph_row = 5'b10001;
-                        3'd6: get_glyph_row = 5'b01110;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    // Drone touches yellow check zone
+    assign drone_in_check =
+        (drone_x + DRONE_SIZE > CHECK_X) &&
+        (drone_x < CHECK_X + ZONE_W) &&
+        (drone_y + DRONE_SIZE > CHECK_Y) &&
+        (drone_y < CHECK_Y + ZONE_H);
 
-                CHAR_A: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b01110;
-                        3'd1: get_glyph_row = 5'b10001;
-                        3'd2: get_glyph_row = 5'b10001;
-                        3'd3: get_glyph_row = 5'b11111;
-                        3'd4: get_glyph_row = 5'b10001;
-                        3'd5: get_glyph_row = 5'b10001;
-                        3'd6: get_glyph_row = 5'b10001;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    assign status = drone_in_alert ? STATUS_ALERT :
+                    drone_in_check ? STATUS_CHECK :
+                    STATUS_SAFE;
 
-                CHAR_L: begin
-                    case (row_in)
-                        3'd0: get_glyph_row = 5'b10000;
-                        3'd1: get_glyph_row = 5'b10000;
-                        3'd2: get_glyph_row = 5'b10000;
-                        3'd3: get_glyph_row = 5'b10000;
-                        3'd4: get_glyph_row = 5'b10000;
-                        3'd5: get_glyph_row = 5'b10000;
-                        3'd6: get_glyph_row = 5'b11111;
-                        default: get_glyph_row = 5'b00000;
-                    endcase
-                end
+    assign move_step = drone_in_alert ? ALERT_SPEED :
+                       drone_in_check ? CHECK_SPEED :
+                       SAFE_SPEED;
 
-                default: begin
-                    get_glyph_row = 5'b00000;
-                end
+    assign drone_area =
+        active_area &&
+        (h_count >= drone_x) &&
+        (h_count <  drone_x + DRONE_SIZE) &&
+        (v_count >= drone_y) &&
+        (v_count <  drone_y + DRONE_SIZE);
 
-            endcase
-        end
-    endfunction
+    assign drone_border =
+        drone_area &&
+        (
+            (h_count == drone_x) ||
+            (h_count == drone_x + DRONE_SIZE - 1) ||
+            (v_count == drone_y) ||
+            (v_count == drone_y + DRONE_SIZE - 1)
+        );
 
-      // Aceasta functie stabileste in ce caracter din text ne aflam.
-    // Textul are 9 pozitii: N O spatiu S I G N A L
-    // Character index for the NO SIGNAL string
-    function automatic logic [3:0] get_char_index(
-        input logic [7:0] col_in
-    );
-        begin
-            if      (col_in < 8'd6)  get_char_index = 4'd0;
-            else if (col_in < 8'd12) get_char_index = 4'd1;
-            else if (col_in < 8'd18) get_char_index = 4'd2;
-            else if (col_in < 8'd24) get_char_index = 4'd3;
-            else if (col_in < 8'd30) get_char_index = 4'd4;
-            else if (col_in < 8'd36) get_char_index = 4'd5;
-            else if (col_in < 8'd42) get_char_index = 4'd6;
-            else if (col_in < 8'd48) get_char_index = 4'd7;
-            else if (col_in < 8'd54) get_char_index = 4'd8;
-            else                     get_char_index = 4'd15;
-        end
-    endfunction
-
-    // Character selector for the text "NO SIGNAL"
-    function automatic logic [3:0] get_char_id(
-        input logic [3:0] index_in
-    );
-        begin
-            case (index_in)
-                4'd0: get_char_id = CHAR_N;
-                4'd1: get_char_id = CHAR_O;
-                4'd2: get_char_id = CHAR_SPACE;
-                4'd3: get_char_id = CHAR_S;
-                4'd4: get_char_id = CHAR_I;
-                4'd5: get_char_id = CHAR_G;
-                4'd6: get_char_id = CHAR_N;
-                4'd7: get_char_id = CHAR_A;
-                4'd8: get_char_id = CHAR_L;
-                default: get_char_id = CHAR_SPACE;
-            endcase
-        end
-    endfunction
-
-    // Aceasta functie calculeaza coloana pixelului in interiorul literei curente.
-    // CHAR_CELL este 6 deoarece litera are 5 pixeli, iar unul este spatiu intre caractere.
-    // Column position inside one 5x7 character cell
-    function automatic logic [2:0] get_glyph_col(
-        input logic [7:0] col_in
-    );
-        begin
-            if      (col_in < 8'd6)  get_glyph_col = col_in[2:0];
-            else if (col_in < 8'd12) get_glyph_col = col_in - 8'd6;
-            else if (col_in < 8'd18) get_glyph_col = col_in - 8'd12;
-            else if (col_in < 8'd24) get_glyph_col = col_in - 8'd18;
-            else if (col_in < 8'd30) get_glyph_col = col_in - 8'd24;
-            else if (col_in < 8'd36) get_glyph_col = col_in - 8'd30;
-            else if (col_in < 8'd42) get_glyph_col = col_in - 8'd36;
-            else if (col_in < 8'd48) get_glyph_col = col_in - 8'd42;
-            else if (col_in < 8'd54) get_glyph_col = col_in - 8'd48;
-            else                     get_glyph_col = 3'd7;
-        end
-    endfunction
-
-    // Pixel selector from one glyph row
-    function automatic logic get_glyph_pixel(
-        input logic [4:0] row_bits,
-        input logic [2:0] col_in
-    );
-        begin
-            case (col_in)
-                3'd0: get_glyph_pixel = row_bits[4];
-                3'd1: get_glyph_pixel = row_bits[3];
-                3'd2: get_glyph_pixel = row_bits[2];
-                3'd3: get_glyph_pixel = row_bits[1];
-                3'd4: get_glyph_pixel = row_bits[0];
-                default: get_glyph_pixel = 1'b0;
-            endcase
-        end
-    endfunction
-
-    // Background color bar generator
-    function automatic logic [11:0] get_background_rgb(
-        input logic [9:0] x,
-        input logic [9:0] y
-    );
-        begin
-            if (y < 10'd360) begin
-                if      (x < 10'd91)  get_background_rgb = 12'hFFF;
-                else if (x < 10'd182) get_background_rgb = 12'hFF0;
-                else if (x < 10'd273) get_background_rgb = 12'h0FF;
-                else if (x < 10'd365) get_background_rgb = 12'h0F0;
-                else if (x < 10'd456) get_background_rgb = 12'hF0F;
-                else if (x < 10'd548) get_background_rgb = 12'hF00;
-                else                  get_background_rgb = 12'h00F;
-            end else if (y < 10'd400) begin
-                if      (x < 10'd91)  get_background_rgb = 12'h00F;
-                else if (x < 10'd182) get_background_rgb = 12'h000;
-                else if (x < 10'd273) get_background_rgb = 12'hF0F;
-                else if (x < 10'd365) get_background_rgb = 12'h000;
-                else if (x < 10'd456) get_background_rgb = 12'h0FF;
-                else if (x < 10'd548) get_background_rgb = 12'h000;
-                else                  get_background_rgb = 12'hFFF;
-            end else begin
-                if      (x < 10'd112) get_background_rgb = 12'h004;
-                else if (x < 10'd228) get_background_rgb = 12'hFFF;
-                else if (x < 10'd340) get_background_rgb = 12'h408;
-                else                  get_background_rgb = 12'h000;
-            end
-        end
-    endfunction
-
-    // Horizontal and vertical pixel counters
+    // Horizontal and vertical VGA counters
     always_ff @(posedge pix_clk) begin
         if (!rst_n) begin
             h_count <= 10'd0;
@@ -356,131 +192,683 @@ module vga_controller #(
         end
     end
 
-    // Horizontal box position
+    // Synchronize physical buttons to pixel clock
     always_ff @(posedge pix_clk) begin
         if (!rst_n) begin
-            box_x <= 10'd180;
+            btn_u_sync <= 2'b00;
+            btn_r_sync <= 2'b00;
+            btn_d_sync <= 2'b00;
+            btn_l_sync <= 2'b00;
+        end else begin
+            btn_u_sync <= {btn_u_sync[0], btn_u};
+            btn_r_sync <= {btn_r_sync[0], btn_r};
+            btn_d_sync <= {btn_d_sync[0], btn_d};
+            btn_l_sync <= {btn_l_sync[0], btn_l};
+        end
+    end
+
+    // Drone movement on X axis
+    always_ff @(posedge pix_clk) begin
+        if (!rst_n) begin
+            drone_x <= DRONE_START_X;
         end else if (frame_tick) begin
-            if (hit_right)
-                box_x <= H_ACTIVE - BOX_W;
-            else if (hit_left)
-                box_x <= 10'd0;
-            else if (dir_x)
-                box_x <= box_x + MOVE_STEP;
+            if (btn_l_s && !btn_r_s) begin
+                if (drone_x > DRONE_MIN_X + move_step)
+                    drone_x <= drone_x - move_step;
+                else
+                    drone_x <= DRONE_MIN_X;
+            end else if (btn_r_s && !btn_l_s) begin
+                if (drone_x < DRONE_MAX_X - move_step)
+                    drone_x <= drone_x + move_step;
+                else
+                    drone_x <= DRONE_MAX_X;
+            end
+        end
+    end
+
+    // Drone movement on Y axis
+    always_ff @(posedge pix_clk) begin
+        if (!rst_n) begin
+            drone_y <= DRONE_START_Y;
+        end else if (frame_tick) begin
+            if (btn_u_s && !btn_d_s) begin
+                if (drone_y > DRONE_MIN_Y + move_step)
+                    drone_y <= drone_y - move_step;
+                else
+                    drone_y <= DRONE_MIN_Y;
+            end else if (btn_d_s && !btn_u_s) begin
+                if (drone_y < DRONE_MAX_Y - move_step)
+                    drone_y <= drone_y + move_step;
+                else
+                    drone_y <= DRONE_MAX_Y;
+            end
+        end
+    end
+
+    function automatic logic inside_rect(
+        input int px,
+        input int py,
+        input int rx,
+        input int ry,
+        input int rw,
+        input int rh
+    );
+        inside_rect = (px >= rx) &&
+                      (px <  rx + rw) &&
+                      (py >= ry) &&
+                      (py <  ry + rh);
+    endfunction
+
+    function automatic logic rect_border(
+        input int px,
+        input int py,
+        input int rx,
+        input int ry,
+        input int rw,
+        input int rh,
+        input int border
+    );
+        rect_border = inside_rect(px, py, rx, ry, rw, rh) &&
+        (
+            (px < rx + border) ||
+            (px >= rx + rw - border) ||
+            (py < ry + border) ||
+            (py >= ry + rh - border)
+        );
+    endfunction
+
+    function automatic logic [11:0] get_dashboard_rgb(
+        input int px,
+        input int py,
+        input logic [1:0] current_status
+    );
+        get_dashboard_rgb = 12'h001;
+
+        // Header color changes depending on status
+        if (py < HEADER_H) begin
+            if (current_status == STATUS_ALERT)
+                get_dashboard_rgb = 12'h700;
+            else if (current_status == STATUS_CHECK)
+                get_dashboard_rgb = 12'h770;
             else
-                box_x <= box_x - MOVE_STEP;
+                get_dashboard_rgb = 12'h070;
         end
+
+        // Footer area
+        else if (py >= FOOTER_Y) begin
+            get_dashboard_rgb = 12'h111;
+        end
+
+        // Main background
+        else begin
+            get_dashboard_rgb = 12'h002;
+        end
+
+        // Main map area
+        if (inside_rect(px, py, MAP_X0, MAP_Y0, MAP_X1 - MAP_X0, MAP_Y1 - MAP_Y0)) begin
+            get_dashboard_rgb = 12'h012;
+
+            // Simple grid
+            if ((px[4:0] == 5'd0) || (py[4:0] == 5'd0))
+                get_dashboard_rgb = 12'h123;
+        end
+
+        // Colored zones
+        if (inside_rect(px, py, BASE_X, BASE_Y, ZONE_W, ZONE_H))
+            get_dashboard_rgb = 12'h027;
+
+        if (inside_rect(px, py, ALERT_X, ALERT_Y, ZONE_W, ZONE_H))
+            get_dashboard_rgb = 12'h700;
+
+        if (inside_rect(px, py, SAFE_X, SAFE_Y, ZONE_W, ZONE_H))
+            get_dashboard_rgb = 12'h073;
+
+        if (inside_rect(px, py, CHECK_X, CHECK_Y, ZONE_W, ZONE_H))
+            get_dashboard_rgb = 12'h770;
+
+        // Borders
+        if (rect_border(px, py, MAP_X0, MAP_Y0, MAP_X1 - MAP_X0, MAP_Y1 - MAP_Y0, 2))
+            get_dashboard_rgb = 12'hFFF;
+
+        if (rect_border(px, py, BASE_X, BASE_Y, ZONE_W, ZONE_H, 2))
+            get_dashboard_rgb = 12'h05F;
+
+        if (rect_border(px, py, ALERT_X, ALERT_Y, ZONE_W, ZONE_H, 2))
+            get_dashboard_rgb = 12'hF00;
+
+        if (rect_border(px, py, SAFE_X, SAFE_Y, ZONE_W, ZONE_H, 2))
+            get_dashboard_rgb = 12'h0F0;
+
+        if (rect_border(px, py, CHECK_X, CHECK_Y, ZONE_W, ZONE_H, 2))
+            get_dashboard_rgb = 12'hFF0;
+    endfunction
+
+    function automatic logic [4:0] font_row(
+        input logic [7:0] ch,
+        input int row
+    );
+        font_row = 5'b00000;
+
+        case (ch)
+
+            8'h20: font_row = 5'b00000; // space
+
+            8'h3A: begin // :
+                case (row)
+                    1: font_row = 5'b00100;
+                    2: font_row = 5'b00100;
+                    4: font_row = 5'b00100;
+                    5: font_row = 5'b00100;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h41: begin // A
+                case (row)
+                    0: font_row = 5'b01110;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b11111;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b10001;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h42: begin // B
+                case (row)
+                    0: font_row = 5'b11110;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b11110;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b11110;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h43: begin // C
+                case (row)
+                    0: font_row = 5'b01111;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b10000;
+                    4: font_row = 5'b10000;
+                    5: font_row = 5'b10000;
+                    6: font_row = 5'b01111;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h44: begin // D
+                case (row)
+                    0: font_row = 5'b11110;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b10001;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b11110;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h45: begin // E
+                case (row)
+                    0: font_row = 5'b11111;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b11110;
+                    4: font_row = 5'b10000;
+                    5: font_row = 5'b10000;
+                    6: font_row = 5'b11111;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h46: begin // F
+                case (row)
+                    0: font_row = 5'b11111;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b11110;
+                    4: font_row = 5'b10000;
+                    5: font_row = 5'b10000;
+                    6: font_row = 5'b10000;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h47: begin // G
+                case (row)
+                    0: font_row = 5'b01111;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b10111;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b01111;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h48: begin // H
+                case (row)
+                    0: font_row = 5'b10001;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b11111;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b10001;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h49: begin // I
+                case (row)
+                    0: font_row = 5'b11111;
+                    1: font_row = 5'b00100;
+                    2: font_row = 5'b00100;
+                    3: font_row = 5'b00100;
+                    4: font_row = 5'b00100;
+                    5: font_row = 5'b00100;
+                    6: font_row = 5'b11111;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h4B: begin // K
+                case (row)
+                    0: font_row = 5'b10001;
+                    1: font_row = 5'b10010;
+                    2: font_row = 5'b10100;
+                    3: font_row = 5'b11000;
+                    4: font_row = 5'b10100;
+                    5: font_row = 5'b10010;
+                    6: font_row = 5'b10001;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h4C: begin // L
+                case (row)
+                    0: font_row = 5'b10000;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b10000;
+                    4: font_row = 5'b10000;
+                    5: font_row = 5'b10000;
+                    6: font_row = 5'b11111;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h4E: begin // N
+                case (row)
+                    0: font_row = 5'b10001;
+                    1: font_row = 5'b11001;
+                    2: font_row = 5'b10101;
+                    3: font_row = 5'b10011;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b10001;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h4F: begin // O
+                case (row)
+                    0: font_row = 5'b01110;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b10001;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b01110;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h52: begin // R
+                case (row)
+                    0: font_row = 5'b11110;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b11110;
+                    4: font_row = 5'b10100;
+                    5: font_row = 5'b10010;
+                    6: font_row = 5'b10001;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h53: begin // S
+                case (row)
+                    0: font_row = 5'b01111;
+                    1: font_row = 5'b10000;
+                    2: font_row = 5'b10000;
+                    3: font_row = 5'b01110;
+                    4: font_row = 5'b00001;
+                    5: font_row = 5'b00001;
+                    6: font_row = 5'b11110;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h54: begin // T
+                case (row)
+                    0: font_row = 5'b11111;
+                    1: font_row = 5'b00100;
+                    2: font_row = 5'b00100;
+                    3: font_row = 5'b00100;
+                    4: font_row = 5'b00100;
+                    5: font_row = 5'b00100;
+                    6: font_row = 5'b00100;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h55: begin // U
+                case (row)
+                    0: font_row = 5'b10001;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b10001;
+                    3: font_row = 5'b10001;
+                    4: font_row = 5'b10001;
+                    5: font_row = 5'b10001;
+                    6: font_row = 5'b01110;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            8'h59: begin // Y
+                case (row)
+                    0: font_row = 5'b10001;
+                    1: font_row = 5'b10001;
+                    2: font_row = 5'b01010;
+                    3: font_row = 5'b00100;
+                    4: font_row = 5'b00100;
+                    5: font_row = 5'b00100;
+                    6: font_row = 5'b00100;
+                    default: font_row = 5'b00000;
+                endcase
+            end
+
+            default: font_row = 5'b00000;
+        endcase
+    endfunction
+
+    function automatic logic [7:0] get_text_char(
+        input int text_id,
+        input int idx
+    );
+        get_text_char = 8'h20;
+
+        case (text_id)
+
+            // SECURITY DASHBOARD
+            0: begin
+                case (idx)
+                    0: get_text_char = "S";
+                    1: get_text_char = "E";
+                    2: get_text_char = "C";
+                    3: get_text_char = "U";
+                    4: get_text_char = "R";
+                    5: get_text_char = "I";
+                    6: get_text_char = "T";
+                    7: get_text_char = "Y";
+                    8: get_text_char = " ";
+                    9: get_text_char = "D";
+                    10: get_text_char = "A";
+                    11: get_text_char = "S";
+                    12: get_text_char = "H";
+                    13: get_text_char = "B";
+                    14: get_text_char = "O";
+                    15: get_text_char = "A";
+                    16: get_text_char = "R";
+                    17: get_text_char = "D";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // STATUS: SAFE
+            1: begin
+                case (idx)
+                    0: get_text_char = "S";
+                    1: get_text_char = "T";
+                    2: get_text_char = "A";
+                    3: get_text_char = "T";
+                    4: get_text_char = "U";
+                    5: get_text_char = "S";
+                    6: get_text_char = ":";
+                    7: get_text_char = " ";
+                    8: get_text_char = "S";
+                    9: get_text_char = "A";
+                    10: get_text_char = "F";
+                    11: get_text_char = "E";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // STATUS: CHECKING
+            2: begin
+                case (idx)
+                    0: get_text_char = "S";
+                    1: get_text_char = "T";
+                    2: get_text_char = "A";
+                    3: get_text_char = "T";
+                    4: get_text_char = "U";
+                    5: get_text_char = "S";
+                    6: get_text_char = ":";
+                    7: get_text_char = " ";
+                    8: get_text_char = "C";
+                    9: get_text_char = "H";
+                    10: get_text_char = "E";
+                    11: get_text_char = "C";
+                    12: get_text_char = "K";
+                    13: get_text_char = "I";
+                    14: get_text_char = "N";
+                    15: get_text_char = "G";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // STATUS: ALERT
+            3: begin
+                case (idx)
+                    0: get_text_char = "S";
+                    1: get_text_char = "T";
+                    2: get_text_char = "A";
+                    3: get_text_char = "T";
+                    4: get_text_char = "U";
+                    5: get_text_char = "S";
+                    6: get_text_char = ":";
+                    7: get_text_char = " ";
+                    8: get_text_char = "A";
+                    9: get_text_char = "L";
+                    10: get_text_char = "E";
+                    11: get_text_char = "R";
+                    12: get_text_char = "T";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // BASE
+            4: begin
+                case (idx)
+                    0: get_text_char = "B";
+                    1: get_text_char = "A";
+                    2: get_text_char = "S";
+                    3: get_text_char = "E";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // ALERT
+            5: begin
+                case (idx)
+                    0: get_text_char = "A";
+                    1: get_text_char = "L";
+                    2: get_text_char = "E";
+                    3: get_text_char = "R";
+                    4: get_text_char = "T";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // SAFE
+            6: begin
+                case (idx)
+                    0: get_text_char = "S";
+                    1: get_text_char = "A";
+                    2: get_text_char = "F";
+                    3: get_text_char = "E";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            // CHECK
+            7: begin
+                case (idx)
+                    0: get_text_char = "C";
+                    1: get_text_char = "H";
+                    2: get_text_char = "E";
+                    3: get_text_char = "C";
+                    4: get_text_char = "K";
+                    default: get_text_char = " ";
+                endcase
+            end
+
+            default: get_text_char = " ";
+        endcase
+    endfunction
+
+    function automatic logic draw_text_pixel(
+        input int px,
+        input int py,
+        input int start_x,
+        input int start_y,
+        input int text_id,
+        input int max_chars,
+        input int scale
+    );
+        int rel_x;
+        int rel_y;
+        int char_index;
+        int char_col;
+        int char_row;
+        int bit_index;
+
+        logic [7:0] ch;
+        logic [4:0] row_bits;
+
+        draw_text_pixel = 1'b0;
+
+        if ((px >= start_x) &&
+            (px < start_x + max_chars * 6 * scale) &&
+            (py >= start_y) &&
+            (py < start_y + 7 * scale)) begin
+
+            rel_x = px - start_x;
+            rel_y = py - start_y;
+
+            char_index = rel_x / (6 * scale);
+            char_col   = (rel_x / scale) % 6;
+            char_row   = rel_y / scale;
+
+            if ((char_col < 5) && (char_row < 7)) begin
+                ch = get_text_char(text_id, char_index);
+                row_bits = font_row(ch, char_row);
+                bit_index = 4 - char_col;
+                draw_text_pixel = row_bits[bit_index];
+            end
+        end
+    endfunction
+
+    always_comb begin
+        if (status == STATUS_ALERT)
+            status_text_id = 3;
+        else if (status == STATUS_CHECK)
+            status_text_id = 2;
+        else
+            status_text_id = 1;
     end
 
-    //BOX pozitia 
-    // Vertical box position
-    always_ff @(posedge pix_clk) begin
-        if (!rst_n) begin
-            box_y <= 10'd160;
-        end else if (frame_tick) begin
-            if (hit_bottom)
-                box_y <= V_ACTIVE - BOX_H;
-            else if (hit_top)
-                box_y <= 10'd0;
-            else if (dir_y)
-                box_y <= box_y + MOVE_STEP;
+    always_comb begin
+        text_pixel = 1'b0;
+        text_rgb   = 12'hFFF;
+
+        // Main title
+        if (draw_text_pixel(h_count, v_count, 212, 14, 0, 18, 2)) begin
+            text_pixel = 1'b1;
+            text_rgb   = 12'hFFF;
+        end
+
+        // Status text
+        if (draw_text_pixel(h_count, v_count, 30, 34, status_text_id, 16, 1)) begin
+            text_pixel = 1'b1;
+
+            if (status == STATUS_ALERT)
+                text_rgb = 12'hF00;
+            else if (status == STATUS_CHECK)
+                text_rgb = 12'hFF0;
             else
-                box_y <= box_y - MOVE_STEP;
+                text_rgb = 12'h0F0;
+        end
+
+        // Zone labels
+        if (draw_text_pixel(h_count, v_count, BASE_X + 38, BASE_Y + 38, 4, 4, 2)) begin
+            text_pixel = 1'b1;
+            text_rgb   = 12'hFFF;
+        end
+
+        if (draw_text_pixel(h_count, v_count, ALERT_X + 32, ALERT_Y + 38, 5, 5, 2)) begin
+            text_pixel = 1'b1;
+            text_rgb   = 12'hFFF;
+        end
+
+        if (draw_text_pixel(h_count, v_count, SAFE_X + 38, SAFE_Y + 38, 6, 4, 2)) begin
+            text_pixel = 1'b1;
+            text_rgb   = 12'hFFF;
+        end
+
+        if (draw_text_pixel(h_count, v_count, CHECK_X + 35, CHECK_Y + 38, 7, 5, 2)) begin
+            text_pixel = 1'b1;
+            text_rgb   = 12'hFFF;
         end
     end
 
-    // Horizontal movement direction
-    always_ff @(posedge pix_clk) begin
-        if (!rst_n) begin
-            dir_x <= 1'b1;
-        end else if (frame_tick) begin
-            if (hit_right)
-                dir_x <= 1'b0;
-            else if (hit_left)
-                dir_x <= 1'b1;
+    always_comb begin
+        background_rgb = get_dashboard_rgb(h_count, v_count, status);
+
+        if (status == STATUS_ALERT)
+            drone_rgb = 12'hF0F;
+        else if (status == STATUS_CHECK)
+            drone_rgb = 12'hFF0;
+        else
+            drone_rgb = 12'h0FF;
+
+        final_rgb = 12'h000;
+
+        if (active_area) begin
+            final_rgb = background_rgb;
+
+            if (drone_area)
+                final_rgb = drone_rgb;
+
+            if (drone_border)
+                final_rgb = 12'hFFF;
+
+            if (text_pixel)
+                final_rgb = text_rgb;
         end
     end
 
-    // Vertical movement direction
-    always_ff @(posedge pix_clk) begin
-        if (!rst_n) begin
-            dir_y <= 1'b1;
-        end else if (frame_tick) begin
-            if (hit_bottom)
-                dir_y <= 1'b0;
-            else if (hit_top)
-                dir_y <= 1'b1;
-            else if (hit_right)
-                dir_y <= ~dir_y;
-        end
-    end
-
-    // VGA visible area and synchronization zones
-    assign active_area = (h_count < H_ACTIVE) && (v_count < V_ACTIVE);
-
-    assign hsync_area = (h_count >= H_ACTIVE + H_FP) &&
-                        (h_count <  H_ACTIVE + H_FP + H_SYNC);
-
-    assign vsync_area = (v_count >= V_ACTIVE + V_FP) &&
-                        (v_count <  V_ACTIVE + V_FP + V_SYNC);
-
-    assign frame_tick = (h_count == H_TOTAL - 1) &&
-                        (v_count == V_TOTAL - 1);
-
-    // VGA synchronization outputs
-    assign hsync = (!rst_n) ? ~H_POL :
-                   (hsync_area ? H_POL : ~H_POL);
-
-    assign vsync = (!rst_n) ? ~V_POL :
-                   (vsync_area ? V_POL : ~V_POL);
-
-    // Collision detection for the moving box  (cand ajunge in capete)
-    assign hit_right  = dir_x  && (box_x >= H_ACTIVE - BOX_W - MOVE_STEP);
-    assign hit_left   = !dir_x && (box_x <= MOVE_STEP);
-
-    assign hit_bottom = dir_y  && (box_y >= V_ACTIVE - BOX_H - MOVE_STEP);
-    assign hit_top    = !dir_y && (box_y <= MOVE_STEP);
-
-    // Local coordinates inside the moving box
-    assign box_area = active_area &&
-                      (h_count >= box_x) &&
-                      (h_count <  box_x + BOX_W) &&
-                      (v_count >= box_y) &&
-                      (v_count <  box_y + BOX_H);
-
-    assign local_x = (h_count >= box_x) ? (h_count - box_x) : 10'd0;
-    assign local_y = (v_count >= box_y) ? (v_count - box_y) : 10'd0;
-
-    // Text area inside the black box
-    assign text_area = box_area &&
-                       (local_x >= TEXT_X) &&
-                       (local_x <  TEXT_X + TEXT_W) &&
-                       (local_y >= TEXT_Y) &&
-                       (local_y <  TEXT_Y + TEXT_H);
-
-    assign tx = text_area ? (local_x - TEXT_X) : 10'd0;
-    assign ty = text_area ? (local_y - TEXT_Y) : 10'd0;
-
-    assign text_col = tx[9:2];
-    assign text_row = ty[9:2];
-
-    assign char_index = get_char_index(text_col);
-    assign char_id    = get_char_id(char_index);
-
-    assign glyph_col  = get_glyph_col(text_col);
-    assign glyph_row  = text_row[2:0];
-    assign glyph_bits = get_glyph_row(char_id, glyph_row);
-
-    assign text_pixel = text_area &&
-                        (glyph_col < CHAR_W) &&
-                        get_glyph_pixel(glyph_bits, glyph_col);
-
-    // Final RGB composition 
-    assign background_rgb = get_background_rgb(h_count, v_count);
-    assign box_rgb        = text_pixel ? 12'hFFF : 12'h000;
-
-    assign final_rgb = (!rst_n || !active_area) ? 12'h000 :
-                       (box_area ? box_rgb : background_rgb);
+    assign hsync = (!rst_n) ? ~H_POL : (hsync_area ? H_POL : ~H_POL);
+    assign vsync = (!rst_n) ? ~V_POL : (vsync_area ? V_POL : ~V_POL);
 
     assign vga_red   = final_rgb[11:8];
     assign vga_green = final_rgb[7:4];
