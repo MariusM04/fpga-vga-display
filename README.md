@@ -12,7 +12,8 @@
 | 0.1 draft | Iulie 2026 | Marius-Daniel Ugureanu | First draft |
 | 0.2 draft | 10 iulie 2026 | Marius-Daniel Ugureanu | Added VGA color bars, moving black box and `NO SIGNAL` text |
 | 0.3 draft | 14 iulie 2026 | Marius-Daniel Ugureanu | Added Security Dashboard concept with button-controlled drone |
-| 0.4 draft | 20 iulie 2026 | Marius-Daniel Ugureanu | Completed Stage 4 documentation and prepared Stage 5 for Pmod JSTK2 integration through SPI |
+| 0.4 draft | 20 iulie 2026 | Marius-Daniel Ugureanu | Completed Stage 4 documentation |
+| 0.5 draft | 22 iulie 2026 | Marius-Daniel Ugureanu | Replaced the joystick implementation stage with PmodKYPD keypad control and moved the joystick to future development |
 
 ---
 
@@ -25,7 +26,7 @@
 - [5. Etapa 2 – Implementare pe FPGA a VGA-ului](#5-etapa-2--implementare-pe-fpga-a-vga-ului)
 - [6. Etapa 3 – Test Pattern și animație NO SIGNAL](#6-etapa-3--test-pattern-și-animație-no-signal)
 - [7. Etapa 4 – Security Dashboard controlat prin butoane](#7-etapa-4--security-dashboard-controlat-prin-butoane)
-- [8. Etapa 5 – Integrarea joystick-ului Pmod JSTK2 prin SPI](#8-etapa-5--integrarea-joystick-ului-pmod-jstk2-prin-spi)
+- [8. Etapa 5 – Integrarea tastaturii PmodKYPD](#8-etapa-5--integrarea-tastaturii-pmodkypd)
 - [9. Etapa 6 – Îmbunătățiri viitoare](#9-etapa-6--îmbunătățiri-viitoare)
 - [10. Probleme întâmpinate și soluții](#10-probleme-întâmpinate-și-soluții)
 - [11. Obiective](#11-obiective)
@@ -41,7 +42,7 @@ Proiectul pornește de la rezoluția **640x480@60Hz**, deoarece aceasta este pot
 
 Proiectul a fost dezvoltat progresiv. Prima variantă a avut rolul de a genera semnalele VGA și de a afișa culori simple. Ulterior au fost introduse bare colorate, un dreptunghi animat cu textul `NO SIGNAL`, iar apoi proiectul a fost transformat într-un dashboard de securitate interactiv, în care o dronă simulată poate fi controlată folosind butoanele plăcii.
 
-Următoarea extindere este integrarea unui joystick Pmod JSTK2, care comunică prin protocolul SPI și va permite controlul mai natural al dronei.
+Următoarea extindere este integrarea unei tastaturi **PmodKYPD 4x4**, folosită pentru controlul dronei și pentru activarea unor comenzi speciale. Integrarea joystick-ului Pmod JSTK2 rămâne o posibilă dezvoltare viitoare.
 
 | Element | Descriere |
 |---|---|
@@ -53,7 +54,7 @@ Următoarea extindere este integrarea unui joystick Pmod JSTK2, care comunică p
 | Rezoluție | 640x480@60Hz |
 | Interfață video | VGA |
 | Rezultat curent | Security Dashboard VGA cu dronă controlată prin butoane |
-| Extindere următoare | Control prin joystick Pmod JSTK2 folosind SPI |
+| Extindere următoare | Control prin tastatura PmodKYPD 4x4 |
 
 ---
 
@@ -68,8 +69,8 @@ Proiectul este împărțit în mai multe etape, astfel încât fiecare funcțion
 | Etapa 2 | Implementare pe FPGA a VGA-ului | Realizată | Sinteză, implementare, bitstream și validare pe monitor |
 | Etapa 3 | Test Pattern și animație `NO SIGNAL` | Realizată | Color bars, dreptunghi animat și text bitmap |
 | Etapa 4 | Security Dashboard controlat prin butoane | Realizată | Dronă controlată manual, zone grafice și statusuri de securitate |
-| Etapa 5 | Integrarea joystick-ului Pmod JSTK2 prin SPI | În dezvoltare | Citirea axelor și controlul dronei prin joystick |
-| Etapa 6 | Îmbunătățiri viitoare | Planificată | OLED, mod PATROL, hartă extinsă și alte funcționalități |
+| Etapa 5 | Integrarea tastaturii PmodKYPD | În testare | Controlul dronei și al comenzilor speciale prin tastatura 4x4 |
+| Etapa 6 | Îmbunătățiri viitoare | Planificată | Joystick Pmod JSTK2, OLED, mod PATROL și hartă extinsă |
 
 Fiecare etapă are propriul folder, care conține fișierele sursă, constrângerile, simularea și documentația aferentă.
 
@@ -407,247 +408,325 @@ vga_top
 | Text bitmap | Realizat |
 | Testare pe monitor | Realizată |
 
-Etapa 4 reprezintă ultima versiune complet funcțională înainte de integrarea joystick-ului.
+Etapa 4 reprezintă versiunea de bază folosită pentru integrarea tastaturii PmodKYPD din Etapa 5.
 
 ---
 
-## 8. Etapa 5 – Integrarea joystick-ului Pmod JSTK2 prin SPI
+## 8. Etapa 5 – Integrarea tastaturii PmodKYPD
 
-Etapa 5 extinde dashboard-ul prin integrarea unui periferic extern, Pmod JSTK2. Acesta va permite controlul mai natural al dronei prin intermediul unui joystick pe două axe.
+Etapa 5 extinde dashboard-ul prin integrarea tastaturii **PmodKYPD 4x4**. Tastatura este folosită pentru controlul dronei și pentru activarea unor funcții speciale, fără a elimina controlul existent prin butoanele plăcii Basys 3.
 
-Joystick-ul este analogic la nivel mecanic, însă modulul Pmod realizează conversia internă și transmite către FPGA valori digitale prin protocolul SPI.
+PmodKYPD este o tastatură matricială cu patru rânduri și patru coloane. FPGA-ul comandă pe rând coloanele și citește starea rândurilor pentru a determina tasta apăsată.
 
 | Element | Descriere |
 |---|---|
-| Periferic | Digilent Pmod JSTK2 |
-| Comunicație | SPI |
-| Axe | X și Y |
-| Date suplimentare | Buton joystick și trigger |
-| Rol | Controlul dronei |
-| Stadiu | În dezvoltare |
+| Periferic | Digilent PmodKYPD |
+| Tip interfață | Tastatură matricială 4x4 |
+| Semnale fizice | 4 coloane și 4 rânduri |
+| Metodă de citire | Scanare succesivă a coloanelor |
+| Modul nou | `pmod_kypd.sv` |
+| Rol | Controlul dronei și activarea comenzilor speciale |
+| Stadiu | Implementată, aflată în testare și depanare |
 
-### 8.1. Conectarea joystick-ului
+### 8.1. Maparea tastelor
 
-Joystick-ul va fi conectat la un port Pmod al plăcii Basys 3.
+Tastele au fost alese astfel încât deplasarea să fie ușor de înțeles și de prezentat.
+
+| Tastă | Funcție |
+|---|---|
+| `2` | Deplasare în sus |
+| `6` | Deplasare spre dreapta |
+| `8` | Deplasare în jos |
+| `4` | Deplasare spre stânga |
+| `0` | Deblocarea dronei din zona `SAFE` |
+| `D` | Revenirea dronei în zona `BASE` și oprirea modului automat |
+| `A` | Pornirea modului de deplasare automată |
+
+Tastele de deplasare sunt combinate cu butoanele fizice ale plăcii. Astfel, drona poate fi controlată atât din butoanele Basys 3, cât și din tastatura PmodKYPD.
+
+### 8.2. Principiul de scanare a tastaturii
+
+Tastatura este organizată sub forma unei matrice:
+
+```text
+             COLOANE
+          C1  C2  C3  C4
+        +---+---+---+---+
+R1      | 1 | 2 | 3 | A |
+        +---+---+---+---+
+R2      | 4 | 5 | 6 | B |
+        +---+---+---+---+
+R3      | 7 | 8 | 9 | C |
+        +---+---+---+---+
+R4      | 0 | F | E | D |
+        +---+---+---+---+
+```
+
+Modulul `pmod_kypd` activează câte o coloană pe nivel logic `0`, apoi citește cele patru rânduri. Combinația dintre coloana activă și rândul detectat identifică tasta apăsată.
 
 | Semnal | Direcție față de FPGA | Rol |
 |---|---|---|
-| `jstk_cs` | Ieșire | Selectează perifericul |
-| `jstk_sclk` | Ieșire | Ceas SPI |
-| `jstk_mosi` | Ieșire | Date trimise de FPGA |
-| `jstk_miso` | Intrare | Date primite de FPGA |
-| 3.3 V | Alimentare | Alimentează modulul |
-| GND | Alimentare | Referință electrică |
+| `kypd_cols[3:0]` | Ieșire | Activează succesiv coloanele tastaturii |
+| `kypd_rows[3:0]` | Intrare | Citește rândurile tastaturii |
+| `key[3:0]` | Intern | Codul hexadecimal al tastei |
+| `key_valid` | Intern | Indică faptul că o tastă stabilă este apăsată |
 
-Nu este necesară o intrare analogică directă pe FPGA.
+Pentru evitarea detectărilor instabile este folosită o logică simplă de debounce. O tastă este acceptată numai după ce aceeași combinație a fost detectată la mai multe scanări consecutive.
 
-### 8.2. Modulul SPI Master
-
-Va fi creat modulul:
+### 8.3. Schema bloc a Etapei 5
 
 ```text
-pmod_jstk2_spi.sv
+                    +----------------------+
+                    |   Tastatură PmodKYPD |
+                    |   matrice 4 x 4      |
+                    +----------+-----------+
+                               |
+                     rows[3:0] / cols[3:0]
+                               |
+                               v
+                    +----------------------+
+                    |     pmod_kypd.sv     |
+                    | scanare + debounce   |
+                    | decodare tastă       |
+                    +----------+-----------+
+                               |
+                        key / key_valid
+                               |
+                               v
++----------------+    +----------------------+    +----------------------+
+| Butoane Basys  |--->|        top.sv        |--->| vga_controller.sv    |
+| U, D, L, R     |    | combinare comenzi    |    | mișcare + zone       |
++----------------+    | A / D / 0            |    | SAFE / BASE / AUTO   |
+                      +----------+-----------+    +----------+-----------+
+                                 |                           |
+                                 |                           v
+                                 |                 +--------------------+
+                                 +---------------->| Semnale VGA RGB,   |
+                                                   | Hsync și Vsync     |
+                                                   +---------+----------+
+                                                             |
+                                                             v
+                                                   +--------------------+
+                                                   |    Monitor VGA     |
+                                                   +--------------------+
 ```
 
-Rolul acestuia este:
+Schema arată fluxul complet al informației. Tastatura este citită de `pmod_kypd.sv`, iar codul tastei este transmis către `top.sv`. Modulul principal transformă tastele în comenzi de mișcare și în comenzi speciale, apoi le transmite către `vga_controller.sv`. 
 
-- generarea ceasului SPI;
-- controlul semnalului `CS`;
-- transmisia pe `MOSI`;
-- recepția pe `MISO`;
-- gruparea biților în octeți;
-- extragerea valorilor axelor;
-- generarea semnalului `data_valid`.
-
-Automatul de stări va conține, în principiu:
+(((((verifica maine si intreaba ce schema sa pastrezi )))))
 
 ```text
-IDLE
-↓
-CS_ACTIVE
-↓
-TRANSFER
-↓
-CS_INACTIVE
-↓
-DATA_VALID
-```
++------------------+
+|  Tastatură       |
+|  PmodKYPD        |
++--------+---------+
+         |
+         v
++------------------+
+|  pmod_kypd.sv    |
+|  Citește tasta   |
++--------+---------+
+         |
+         v
++------------------+
+|     top.sv       |
+| Combină comenzile|
++--------+---------+
+         |
+         v
++------------------+
+| vga_controller.sv|
+| Controlează drona|
++--------+---------+
+         |
+         v
++------------------+
+|   Monitor VGA    |
++------------------+
+Tastatura PmodKYPD este citită de modulul pmod_kypd.sv. Tasta detectată este transmisă către top.sv, unde este transformată într-o comandă de deplasare sau într-o comandă specială. Comanda este apoi trimisă către vga_controller.sv, care actualizează poziția dronei și imaginea afișată pe monitor.
 
-| Stare | Rol |
-|---|---|
-| `IDLE` | Așteaptă un nou transfer |
-| `CS_ACTIVE` | Selectează joystick-ul |
-| `TRANSFER` | Trimite și primește date |
-| `CS_INACTIVE` | Încheie transferul |
-| `DATA_VALID` | Semnalizează date noi |
 
-### 8.3. Interpretarea axelor
-
-Modulul SPI va furniza valorile:
-
-```text
-joy_x
-joy_y
-```
-
-Aceste valori vor fi interpretate astfel:
-
-| Valoare | Interpretare |
-|---|---|
-| X mic | Stânga |
-| X central | Fără mișcare orizontală |
-| X mare | Dreapta |
-| Y mic | Sus sau jos, în funcție de orientare |
-| Y central | Fără mișcare verticală |
-| Y mare | Direcția verticală opusă |
-
-Orientarea exactă a axei Y va fi stabilită prin testare.
-
-### 8.4. Zona moartă
-
-Pentru a evita mișcarea accidentală a dronei va fi introdusă o zonă moartă.
-
-| Condiție | Comandă |
-|---|---|
-| X sub pragul inferior | Stânga |
-| X între praguri | Oprire pe axa X |
-| X peste pragul superior | Dreapta |
-| Y sub pragul inferior | Direcție verticală |
-| Y între praguri | Oprire pe axa Y |
-| Y peste pragul superior | Direcție verticală opusă |
-
-### 8.5. Modulul de interpretare
-
-Va fi creat modulul:
+### 8.4. Organizarea modulelor
 
 ```text
-joystick_decoder.sv
-```
-
-Acesta va primi:
-
-```text
-joy_x
-joy_y
-data_valid
-```
-
-și va genera:
-
-```text
-joy_up
-joy_down
-joy_left
-joy_right
-```
-
-### 8.6. Organizarea proiectului
-
-```text
-top.sv
+vga_top
 ├── clk_vga_wrapper
-├── pmod_jstk2_spi
-├── joystick_decoder
+├── pmod_kypd
 └── vga_controller
 ```
 
-Fluxul de date va fi:
+| Fișier / modul | Rol |
+|---|---|
+| `top.sv` | Conectează tastatura, butoanele, Clock Wizard-ul și controllerul VGA |
+| `pmod_kypd.sv` | Scanează matricea, face debounce și decodează tasta |
+| `vga_controller.sv` | Controlează dashboard-ul, drona și funcțiile speciale |
+| `clk_vga_wrapper` | Generează ceasul de pixel |
+| `Constraint.xdc` | Mapează semnalele VGA, butoanele și pinii Pmod JA |
+
+### 8.5. Conectarea în `top.sv`
+
+În modulul principal sunt adăugate porturile:
+
+```systemverilog
+input  logic [3:0] kypd_rows,
+output logic [3:0] kypd_cols
+```
+
+Modulul `pmod_kypd` furnizează:
+
+```systemverilog
+logic [3:0] kypd_key;
+logic       kypd_key_valid;
+```
+
+Tastele `2`, `4`, `6` și `8` sunt transformate în aceleași semnale de deplasare folosite anterior de butoanele plăcii.
+
+Comenzile speciale sunt transmise separat către controller:
+
+```systemverilog
+key_a
+key_d
+key_0
+```
+
+### 8.6. Blocarea în zona SAFE
+
+Când drona intră în zona verde `SAFE`, controllerul o poziționează în centrul zonei și blochează deplasarea.
+
+| Situație | Comportament |
+|---|---|
+| Intrare în `SAFE` | Drona este centrată și blocată |
+| Apăsarea tastelor de direcție | Nu produce mișcare cât timp drona este blocată |
+| Apăsarea tastei `0` | Drona este deblocată |
+| Ieșirea completă din `SAFE` | Sistemul poate activa din nou blocarea la următoarea intrare |
+
+Această funcție simulează o zonă de aterizare sau de staționare sigură.
+
+### 8.7. Revenirea în BASE
+
+La apăsarea tastei `D`, drona este mutată direct în centrul zonei `BASE`.
+
+Comanda `D` realizează simultan:
+
+- poziționarea dronei în `BASE`;
+- anularea blocării din `SAFE`;
+- oprirea modului automat;
+- revenirea la controlul manual.
+
+### 8.8. Modul de mișcare automată
+
+Tasta `A` activează deplasarea automată a dronei. Direcția este generată pseudo-aleator și este modificată periodic sau atunci când drona ajunge la marginile hărții.
+
+Pentru generarea direcției este folosit un registru de tip LFSR. Acesta nu produce numere complet aleatoare, dar generează o secvență suficient de variată pentru o animație hardware.
+
+| Situație | Comportament |
+|---|---|
+| Se apasă `A` | Modul automat este activat |
+| Drona ajunge la margine | Direcția este inversată |
+| Se apasă o comandă manuală | Controlul manual are prioritate |
+| Se apasă `D` | Modul automat este oprit și drona revine în `BASE` |
+| Drona intră în `SAFE` | Drona este blocată conform regulii zonei |
+
+### 8.9. Constrângerile PmodKYPD
+
+Tastatura este conectată la portul Pmod **JA**. Fișierul `Constraint.xdc` conține opt pini suplimentari:
+
+- patru ieșiri pentru `kypd_cols`;
+- patru intrări pentru `kypd_rows`.
+
+```tcl
+## PmodKYPD connected to Pmod port JA
+
+set_property -dict { PACKAGE_PIN G2 IOSTANDARD LVCMOS33 } [get_ports {kypd_cols[0]}]
+set_property -dict { PACKAGE_PIN J2 IOSTANDARD LVCMOS33 } [get_ports {kypd_cols[1]}]
+set_property -dict { PACKAGE_PIN L2 IOSTANDARD LVCMOS33 } [get_ports {kypd_cols[2]}]
+set_property -dict { PACKAGE_PIN J1 IOSTANDARD LVCMOS33 } [get_ports {kypd_cols[3]}]
+
+set_property -dict { PACKAGE_PIN G3 IOSTANDARD LVCMOS33 } [get_ports {kypd_rows[0]}]
+set_property -dict { PACKAGE_PIN H2 IOSTANDARD LVCMOS33 } [get_ports {kypd_rows[1]}]
+set_property -dict { PACKAGE_PIN K2 IOSTANDARD LVCMOS33 } [get_ports {kypd_rows[2]}]
+set_property -dict { PACKAGE_PIN H1 IOSTANDARD LVCMOS33 } [get_ports {kypd_rows[3]}]
+```
+
+### 8.10. Stadiul Etapei 5
+
+| Cerință | Stadiu |
+|---|---|
+| Crearea modulului `pmod_kypd.sv` | Realizată |
+| Adăugarea tastaturii în `top.sv` | Realizată |
+| Adăugarea pinilor în XDC | Realizată |
+| Control cu `2`, `4`, `6`, `8` | În testare |
+| Blocarea dronei în `SAFE` | În testare |
+| Deblocarea cu `0` | În testare |
+| Revenirea în `BASE` cu `D` | În testare |
+| Mișcarea automată cu `A` | În testare |
+| Testarea și eliminarea bugurilor | În curs |
+| Validarea finală pe monitor | De realizat |
+
+---
+
+## 9. Etapa 6 – Îmbunătățiri viitoare
+
+După integrarea tastaturii PmodKYPD, proiectul poate fi extins cu funcționalități suplimentare.
+
+| Funcționalitate | Descriere | Stadiu |
+|---|---|---|
+| Pmod JSTK2 | Control analogic al dronei prin joystick și comunicație SPI | Planificată |
+| OLED Pmod | Afișarea statusului pe un display extern | Planificată |
+| Mod automat `PATROL` | Drona urmează un traseu prestabilit | Planificată |
+| Hartă mai complexă | Mai multe zone și obstacole | Planificată |
+| Coordonate X/Y | Afișarea poziției dronei pe ecran | Planificată |
+| Moduri de control | Selectare între butoane, tastatură și joystick | Planificată |
+| Full HD | Trecerea la o rezoluție mai mare | Opțională |
+| Senzori externi | Integrarea unor senzori de distanță sau mișcare | Opțională |
+
+### 9.1. Integrarea joystick-ului Pmod JSTK2
+
+Joystick-ul Pmod JSTK2 rămâne o dezvoltare viitoare. Acesta va comunica prin SPI și va furniza valorile axelor X și Y.
+
+Integrarea va necesita:
+
+- un modul SPI Master;
+- citirea și reconstruirea pachetului de date;
+- aplicarea unei zone moarte în jurul poziției centrale;
+- transformarea valorilor analogice în comenzi de deplasare;
+- posibilitatea reglării vitezei în funcție de înclinarea joystick-ului.
+
+Arhitectura planificată este:
 
 ```text
 Pmod JSTK2
     │ SPI
     ▼
 pmod_jstk2_spi
-    │ joy_x, joy_y, buttons, data_valid
+    │ joy_x / joy_y / buttons
     ▼
 joystick_decoder
-    │ joy_up, joy_down, joy_left, joy_right
+    │ direcție și viteză
     ▼
 vga_controller
-    │
-    ▼
-Dronă pe Security Dashboard
 ```
 
-| Fișier | Rol |
-|---|---|
-| `top.sv` | Conectează toate modulele |
-| `vga_controller.sv` | Păstrează dashboard-ul |
-| `pmod_jstk2_spi.sv` | Implementează comunicația SPI |
-| `joystick_decoder.sv` | Transformă axele în direcții |
-| `Constraint.xdc` | Adaugă pinii Pmod |
-| `tb_pmod_jstk2_spi.sv` | Testează comunicația SPI |
+Această funcționalitate nu face parte din versiunea curentă a Etapei 5.
 
-Clock Wizard-ul VGA va fi păstrat, deoarece rezoluția rămâne aceeași. Modulul SPI va folosi ceasul de sistem de 100 MHz și un divizor intern pentru obținerea unui ceas SPI mai lent.
-
-### 8.7. Planul de implementare
-
-| Pas | Activitate | Rezultat urmărit |
-|---|---|---|
-| 1 | Copierea Etapei 4 | Păstrarea versiunii funcționale |
-| 2 | Crearea folderului Etapei 5 | Organizarea proiectului |
-| 3 | Adăugarea semnalelor SPI | Pregătirea conexiunii |
-| 4 | Adăugarea pinilor în XDC | Conectarea fizică |
-| 5 | Implementarea SPI Master | Generarea transferurilor |
-| 6 | Citirea axelor X și Y | Obținerea poziției joystick-ului |
-| 7 | Implementarea dead zone | Eliminarea mișcării accidentale |
-| 8 | Testarea pe LED-uri | Verificarea direcțiilor |
-| 9 | Conectarea la dashboard | Controlul dronei |
-| 10 | Testarea finală | Validarea sistemului complet |
-
-În timpul testării, butoanele plăcii vor fi păstrate în paralel cu joystick-ul.
-
-### 8.8. Stadiul Etapei 5
-
-| Cerință | Stadiu |
-|---|---|
-| Folder separat | Pregătit / în organizare |
-| Reutilizarea Etapei 4 | Stabilită |
-| Păstrarea Clock Wizard-ului | Stabilită |
-| Semnale SPI în top | De realizat |
-| Pini Pmod în XDC | De realizat |
-| Modul SPI Master | De realizat |
-| Citirea axelor | De realizat |
-| Dead zone | De realizat |
-| Test LED-uri | De realizat |
-| Controlul dronei | De realizat |
-| Test final | De realizat |
-
----
-
-## 9. Etapa 6 – Îmbunătățiri viitoare
-
-După integrarea joystick-ului, proiectul poate fi extins cu funcționalități suplimentare.
-
-| Funcționalitate | Descriere | Stadiu |
-|---|---|---|
-| OLED Pmod | Afișarea statusului pe un display extern | Planificată |
-| Mod automat `PATROL` | Drona urmează un traseu prestabilit | Planificată |
-| Hartă mai complexă | Mai multe zone și obstacole | Planificată |
-| Coordonate X/Y | Afișarea poziției dronei pe ecran | Planificată |
-| Viteză analogică | Viteza depinde de înclinarea joystick-ului | Planificată |
-| Joystick + butoane | Joystick pentru mișcare și butoane pentru moduri | Planificată |
-| Full HD | Trecerea la o rezoluție mai mare | Opțională |
-| Senzori externi | Integrarea unor senzori de distanță sau mișcare | Opțională |
-
-### 9.1. Mod automat `PATROL`
+### 9.2. Mod automat `PATROL`
 
 În acest mod, drona se va deplasa automat pe un traseu prestabilit. Utilizatorul poate comuta între control manual și control automat.
 
-### 9.2. Afișarea coordonatelor
+### 9.3. Afișarea coordonatelor
 
 Coordonatele `drone_x` și `drone_y` pot fi convertite în caractere și afișate în dashboard.
 
-### 9.3. Integrarea unui OLED Pmod
+### 9.4. Integrarea unui OLED Pmod
 
 Un display OLED extern poate afișa:
 
 - statusul curent;
 - poziția dronei;
 - modul de control;
-- starea comunicației SPI.
+- starea perifericelor conectate.
 
-### 9.4. Rezoluții mai mari
+### 9.5. Rezoluții mai mari
 
 Trecerea la o rezoluție mai mare ar necesita:
 
@@ -673,7 +752,7 @@ Etapa 6 reprezintă direcția de dezvoltare ulterioară și nu este obligatorie 
 | Text greu de afișat | FPGA-ul nu are funcții software | Font bitmap |
 | Mișcare prea rapidă | Poziția era actualizată prea des | Actualizare la `frame_tick` |
 | Butoane nesincronizate | Intrări asincrone | Sincronizare pe două registre |
-| Complexitatea joystick-ului | Necesită SPI și interpretare X/Y | Separarea în module distincte |
+| Detectarea instabilă a tastelor | Contactele mecanice pot produce mai multe tranziții | Scanare periodică și debounce în `pmod_kypd.sv` |
 
 ### 10.1. Resetul de pe switch la buton
 
@@ -689,12 +768,12 @@ Structura generală este:
 Vscode_vga
 ├── etapa_3_test_pattern_no_signal
 ├── etapa_4_security_dashboard_buttons
-└── etapa_5_pmod_jstk2_joystick
+└── etapa_5_pmod_kypd_keypad
 ```
 
 ### 10.3. Separarea logicii
 
-Logica VGA, logica joystick-ului și interpretarea direcțiilor sunt păstrate în module diferite pentru claritate și testare independentă.
+Logica VGA, logica tastaturii și controlul dronei sunt păstrate în module diferite pentru claritate și testare independentă.
 
 ---
 
@@ -711,7 +790,7 @@ Logica VGA, logica joystick-ului și interpretarea direcțiilor sunt păstrate �
 - [x] Să pot explica proiectul pe etape.
 - [x] Să documentez procesul de dezvoltare.
 - [x] Să controlez un obiect grafic prin intrări fizice.
-- [ ] Să integrez complet un periferic extern prin SPI.
+- [ ] Să finalizez testarea tastaturii PmodKYPD și eliminarea bugurilor.
 
 ### 11.2. Obiective de proiect
 
@@ -731,11 +810,14 @@ Logica VGA, logica joystick-ului și interpretarea direcțiilor sunt păstrate �
 - [x] Statusurile `SAFE`, `CHECKING`, `ALERT`.
 - [x] Modificarea vitezei în funcție de status.
 - [x] Organizarea proiectului pentru Etapa 5.
-- [ ] Implementarea controlerului SPI.
-- [ ] Citirea joystick-ului Pmod JSTK2.
-- [ ] Implementarea zonei moarte.
-- [ ] Controlul dronei prin joystick.
+- [x] Crearea modulului `pmod_kypd.sv`.
+- [x] Adăugarea tastaturii în `top.sv`.
+- [x] Adăugarea constrângerilor pentru portul Pmod JA.
+- [ ] Validarea tastelor `2`, `4`, `6`, `8`.
+- [ ] Validarea comenzilor `A`, `D` și `0`.
+- [ ] Eliminarea bugurilor din logica de control.
 - [ ] Testarea finală a Etapei 5.
+- [ ] Integrarea joystick-ului Pmod JSTK2 ca dezvoltare viitoare.
 
 ---
 
@@ -747,6 +829,8 @@ Primele etape au avut rolul de a proiecta, simula și implementa controllerul VG
 
 În Etapa 4 a fost realizat un Security Dashboard. Drona simulată poate fi controlată cu butoanele plăcii, iar poziția acesteia determină statusurile `SAFE`, `CHECKING` și `ALERT`. Interfața modifică textul, culorile și viteza în funcție de starea curentă.
 
-Etapa 5 este dedicată integrării joystick-ului Pmod JSTK2 prin SPI. Pentru aceasta vor fi adăugate un modul SPI Master și un modul pentru interpretarea axelor X și Y. Controlul prin butoane va fi păstrat temporar pentru testare.
+Etapa 5 este dedicată integrării tastaturii PmodKYPD. Pentru aceasta a fost adăugat modulul `pmod_kypd.sv`, care scanează matricea tastaturii, elimină apăsările instabile și transmite codul tastei către modulul principal. Tastele `2`, `4`, `6` și `8` controlează deplasarea, tasta `0` deblochează drona din zona `SAFE`, tasta `D` o readuce în `BASE`, iar tasta `A` activează mișcarea automată.
 
-Organizarea proiectului pe etape și păstrarea fișierelor în GitHub permit continuarea dezvoltării fără pierderea versiunilor funcționale. Proiectul demonstrează utilizarea mai multor concepte importante: generare VGA, numărătoare, registre, automate de stare, randare grafică, sincronizarea intrărilor și integrarea perifericelor externe.
+Integrarea joystick-ului Pmod JSTK2 a fost mutată în planul de dezvoltare viitoare. Aceasta va necesita comunicație SPI și interpretarea valorilor axelor X și Y, dar nu face parte din versiunea curentă aflată în testare.
+
+Organizarea proiectului pe etape și păstrarea fișierelor în GitHub permit continuarea dezvoltării fără pierderea versiunilor funcționale. Proiectul demonstrează utilizarea mai multor concepte importante: generare VGA, numărătoare, registre, logică secvențială și combinatorie, randare grafică, sincronizarea intrărilor și integrarea unei tastaturi matriceale externe.
